@@ -9,6 +9,7 @@ namespace Xamarin.Android.Build.Tests
 	/// A set of tests checking MAX_PATH
 	/// </summary>
 	[TestFixture]
+	[Category ("Node-3")]
 	[Parallelizable (ParallelScope.Children)]
 	public class MaxPathTests : BaseTest
 	{
