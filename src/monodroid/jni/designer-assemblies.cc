@@ -11,19 +11,50 @@ extern "C" {
 
 using namespace xamarin::android::internal;
 
-void
+static int global_context_ids;
+
+static MonoObject*
+create_new_alc (MonoDomain *domain, int context_id)
+{
+	// Create new ALC instance
+	MonoClass *alc_klass = utils.monodroid_get_class_from_name (domain, "System.Runtime.Loader", "System.Runtime.Loader", "AssemblyLoadContext");
+	const char* alc_name = utils.monodroid_strdup_printf ("DesignerContext%d", context_id);
+	MonoString *alc_name_str = mono_string_new (domain, alc_name);
+	MonoBoolean isCollectible = FALSE;
+	MonoObject *alc = mono_object_new (domain, alc_klass);
+
+	// Initialize it with name
+	MonoMethod *alc_ctor = mono_class_get_method_from_name (alc_klass, ".ctor", 2);
+	void *args[2];
+	args[0] = alc_name_str;
+	args[1] = &isCollectible;
+	utils.monodroid_runtime_invoke (domain, alc_ctor, alc, args, NULL);
+
+	return alc;
+}
+
+static void
+unload_alc (MonoDomain *domain, MonoObject *alc)
+{
+	MonoClass *alc_klass = utils.monodroid_get_class_from_name (domain, "System.Runtime.Loader", "System.Runtime.Loader", "AssemblyLoadContext");
+	MonoMethod *alc_unload = mono_class_get_method_from_name (alc_klass, "Unload", 0);
+	utils.monodroid_runtime_invoke (domain, alc_unload, alc, NULL, NULL);
+}
+
+int
 DesignerAssemblies::add_or_update_from_java (MonoDomain *domain, JNIEnv *env, jstring_array_wrapper &assemblies, jobjectArray assembliesBytes, jstring_array_wrapper &assembliesPaths)
 {
 	assert (assembliesBytes != nullptr);
+
 	DesignerAssemblyEntry *new_entry = new DesignerAssemblyEntry (domain, env, assemblies, assembliesBytes, assembliesPaths);
 	add_or_replace_entry (new_entry);
+	return new_entry->context_id;
 }
 
 MonoAssembly*
-DesignerAssemblies::try_load_assembly (MonoDomain *domain, MonoAssemblyName *name)
+DesignerAssemblies::try_load_assembly (MonoDomain *domain, int context, MonoAssemblyName *name)
 {
-	int domain_id = mono_domain_get_id (domain);
-	DesignerAssemblyEntry *entry = find_entry (domain_id);
+	DesignerAssemblyEntry *entry = find_entry (context);
 	if (entry == nullptr)
 		return nullptr;
 
@@ -74,19 +105,29 @@ DesignerAssemblies::try_load_assembly (MonoDomain *domain, MonoAssemblyName *nam
 }
 
 void
-DesignerAssemblies::clear_for_domain (MonoDomain *domain)
+DesignerAssemblies::clear_for_context (MonoDomain *domain, int context_id)
 {
-	int domain_id = mono_domain_get_id (domain);
-	DesignerAssemblyEntry *entry = remove_entry (domain_id);
+	DesignerAssemblyEntry *entry = remove_entry (context_id);
+	if (entry->alc)
+		unload_alc (domain, entry->alc);
 	delete entry;
 }
 
+MonoObject*
+DesignerAssemblies::get_alc_for_context (MonoDomain *domain, int context_id)
+{
+	DesignerAssemblyEntry *entry = find_entry (context_id);
+	if (entry == nullptr)
+		return nullptr;
+	return entry->alc;
+}
+
 DesignerAssemblies::DesignerAssemblyEntry*
-DesignerAssemblies::find_entry (int domain_id)
+DesignerAssemblies::find_entry (int context_id)
 {
 	for (unsigned int i = 0; i < length; i++) {
 		auto entry = entries[i];
-		if (entry->domain_id == domain_id)
+		if (entry->context_id == context_id)
 			return entry;
 	}
 	return nullptr;
@@ -97,7 +138,7 @@ DesignerAssemblies::add_or_replace_entry (DesignerAssemblies::DesignerAssemblyEn
 {
 	for (unsigned int i = 0; i < length; i++) {
 		auto entry = entries[i];
-		if (entry->domain_id == new_entry->domain_id) {
+		if (entry->context_id == new_entry->context_id) {
 			entries[i] = new_entry;
 			delete entry;
 			return;
@@ -121,11 +162,11 @@ DesignerAssemblies::add_entry (DesignerAssemblies::DesignerAssemblyEntry *entry)
 }
 
 DesignerAssemblies::DesignerAssemblyEntry*
-DesignerAssemblies::remove_entry (int domain_id)
+DesignerAssemblies::remove_entry (int context_id)
 {
 	for (unsigned int i = 0; i < length; i++) {
 		DesignerAssemblyEntry *entry = entries[i];
-		if (entry->domain_id == domain_id) {
+		if (entry->context_id == context_id) {
 			for (unsigned int j = i; j < length - 1; j++)
 				entries[j] = entries[j + 1];
 			length--;
@@ -138,7 +179,8 @@ DesignerAssemblies::remove_entry (int domain_id)
 
 DesignerAssemblies::DesignerAssemblyEntry::DesignerAssemblyEntry (MonoDomain *domain, JNIEnv *env, jstring_array_wrapper &assemblies, jobjectArray assembliesBytes, jstring_array_wrapper &assembliesPaths)
 {
-	this->domain_id = mono_domain_get_id (domain);
+	this->context_id = global_context_ids++;
+	this->alc = create_new_alc (domain, this->context_id);
 	this->assemblies_count = static_cast<unsigned int> (assemblies.get_length ());
 	this->names = new char*[assemblies_count];
 	this->assemblies_bytes = new char*[assemblies_count];

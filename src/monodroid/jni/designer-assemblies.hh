@@ -7,6 +7,7 @@
 #include <mono/metadata/assembly.h>
 
 #define DEFAULT_CAPACITY 8
+#define DEFAULT_CONTEXT_ID -1
 
 namespace xamarin::android::internal {
 	class DesignerAssemblies
@@ -14,7 +15,8 @@ namespace xamarin::android::internal {
 		private:
 			struct DesignerAssemblyEntry
 			{
-				int domain_id;
+				int context_id;
+				MonoObject *alc;
 				unsigned int assemblies_count;
 				char **names;
 				char **assemblies_bytes;
@@ -33,9 +35,10 @@ namespace xamarin::android::internal {
 			}
 
 			bool has_assemblies () const { return length > 0; }
-			MonoAssembly* try_load_assembly (MonoDomain *domain, MonoAssemblyName *name);
-			void add_or_update_from_java (MonoDomain *domain, JNIEnv *env, jstring_array_wrapper &assemblies, jobjectArray assembliesBytes, jstring_array_wrapper &assembliesPaths);
-			void clear_for_domain (MonoDomain *domain);
+			MonoAssembly* try_load_assembly (MonoDomain *domain, int context_id, MonoAssemblyName *name);
+			int add_or_update_from_java (MonoDomain *domain, JNIEnv *env, jstring_array_wrapper &assemblies, jobjectArray assembliesBytes, jstring_array_wrapper &assembliesPaths);
+			void clear_for_context (MonoDomain *domain, int context_id);
+			MonoObject* get_alc_for_context (MonoDomain *domain, int context_id);
 
 		private:
 			DesignerAssemblyEntry **entries;
